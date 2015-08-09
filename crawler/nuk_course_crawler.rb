@@ -5,88 +5,145 @@ require 'pry'
 
 class NationalUniversityOfKaohsiungCrawler
 
-	def initialize year: nil, term: nil, update_progress: nil, after_each: nil
+  PERIODS = {
+    "X" => nil,
+    "1" => 1,
+    "2" => 2,
+    "3" => 3,
+    "4" => 4,
+    "Y" => 5,
+    "5" => 6,
+    "6" => 7,
+    "7" => 8,
+    "8" => 9,
+    "9" => 10,
+    "10" => 11,
+    "11" => 12,
+    "12" => 13,
+    "13" => 14,
+    }
 
-		@year = year-1911
-		@term = term
-		@update_progress_proc = update_progress
-		@after_each_proc = after_each
+  def initialize year: nil, term: nil, update_progress: nil, after_each: nil
 
-		@ic = Iconv.new('utf-8//IGNORE//translit', 'big5')
-	end
+    @year = year
+    @term = term
+    @update_progress_proc = update_progress
+    @after_each_proc = after_each
 
-	def courses
-		@courses = []
+    @query_url = 'http://course.nuk.edu.tw/QueryCourse/'
+    @ic = Iconv.new('utf-8//IGNORE//translit', 'big5')
+  end
 
-		@Pclass = ''		# 初始預設爲空
-		query_url = %x(curl -s 'http://course.nuk.edu.tw/QueryCourse/QueryCourse.asp' --data 'Condition=&OpenYear=#{@year}&Helf=#{@term}&Pclass=#{@Pclass}' --compressed)
-		doc = Nokogiri::HTML(@ic.iconv(query_url))
+  def courses
+    @courses = []
 
-		facs_h = Hash[doc.css('select[name="Pclass"] option:not(:first-child)').map{|opt| [opt[:value], opt.text]}]
+    r = RestClient.post(@query_url + "QueryCourse.asp", {
+      "OpenYear" => @year - 1911,
+      "Helf" => @term,
+      })
+    doc = Nokogiri::HTML(@ic.iconv(r))
 
-		facs_h.each do |fac_c, fac_n|
+    Hash[doc.css('select[name="Pclass"] option:not(:first-child)').map{|opt| [opt[:value], opt.text]}].each do |fac_c, fac_n|
 
-			@Pclass = fac_c
+      r = RestClient.post(@query_url + "QueryCourse.asp", {
+        "OpenYear" => @year - 1911,
+        "Helf" => @term,
+        "Pclass" => fac_c,
+        })
+      doc = Nokogiri::HTML(@ic.iconv(r))
 
-			query_url = %x(curl -s 'http://course.nuk.edu.tw/QueryCourse/QueryCourse.asp' --data 'Condition=&OpenYear=#{@year}&Helf=#{@term}&Pclass=#{@Pclass}' --compressed)
-			doc = Nokogiri::HTML(@ic.iconv(query_url))
+      Hash[doc.css('select[name="Sclass"] option:not(:first-child)').map{|opt| [opt[:value], opt.text]}].each do |dep_c, dep_n|
 
-			deps_h = Hash[doc.css('select[name="Sclass"] option:not(:first-child)').map{|opt| [opt[:value], opt.text]}]
-			deps_h.each do |dep_c, dep_n|
+        r = RestClient.post(@query_url + "QueryCourse.asp", {
+          "OpenYear" => @year - 1911,
+          "Helf" => @term,
+          "Pclass" => fac_c,
+          "Sclass" => dep_c,
+          })
+        doc = Nokogiri::HTML(@ic.iconv(r))
 
-				@Sclass = dep_c
+        hidden = Hash[doc.css('input[type="hidden"]').map{|hidden| [hidden[:name], hidden[:value]]}]
 
-				result_url = %x(curl -s 'http://course.nuk.edu.tw/QueryCourse/QueryResult.asp' --data 'Condition=%3Ctr%3E%3Ctd+width%3D%22%2233%25%22%22%3E%B6%7D%BD%D2%BE%C7%A6%7E%A1G104%A1%40%A1%40%B6%7D%BD%D2%BE%C7%B4%C1%A1G%B2%C41%BE%C7%B4%C1%3C%2Ftd%3E%3Ctd+width%3D%22%2233%25%22%22%3E%B6%7D%BD%D2%B3%A1%A7O%A1G%A4j%BE%C7%B3%A1%A4G%A6%7E%A8%EE%A6b%C2%BE%B1M%AFZ%3C%2Ftd%3E%3Ctd+width%3D%22%2234%25%22%22%3E%B6%7D%BD%D2%A8t%A9%D2%A1G%B9B%B0%CA%B0%B7%B1d%BBP%A5%F0%B6%A2%BE%C7%A8t%3C%2Ftd%3E%3C%2Ftr%3E%3Ctr%3E%3Ctd+width%3D%22%2233%25%22%22%3E%B6%7D%BD%D2%AFZ%AF%C5%A1G%B9B%B0%CA%B0%B7%B1d%BBP%A5%F0%B6%A2%BE%C7%A8t1%A6%7E%AF%C5%28F10412%29%3C%2Ftd%3E%3Ctd+width%3D%22%2233%25%22%22%3E%B1%C2%BD%D2%B1%D0%AEv%A1G%B5L%3C%2Ftd%3E%3Ctd+width%3D%22%2234%25%22%22%3E%A4W%BD%D2%AE%C9%B6%A1%A1G%B5L%3C%2Ftd%3E%3C%2Ftr%3E&OpenYear=#{@year}&Helf=#{@term}&Pclass=#{@Pclass}&Sclass=#{@Sclass}' --compressed)
-				doc = Nokogiri::HTML(@ic.iconv(result_url))
+        r = RestClient.post(@query_url + "QueryResult.asp", hidden.merge({
+          "OpenYear" => @year - 1911,
+          "Helf" => @term,
+          "Pclass" => fac_c,
+          "Sclass" => dep_c,
+          }) )
+        doc = Nokogiri::HTML(@ic.iconv(r))
 
-				for i in 0..doc.css('tr[align = "center"]').count - 1
-					data = []
+        doc.css('tr[align = "center"]').map{|tr| tr}.each do |tr|
+          data = tr.css('td').map{|td| td.text}
+          syllabus_url = @query_url + tr.css('td a').map{|a| a[:href]}[0]
 
-					for j in 0..doc.css('tr[align = "center"]')[i].css('td').count - 1
+          course_days, course_periods, course_locations = [], [], []
+          {1 => data[13],2 => data[14],3 => data[15],4 => data[16],5 => data[17],6 => data[18],7 => data[19]}.each do |day, periods|
+            if periods != nil
+              periods.scan(/(?<period>\w+)/).each do |p|
+                next if p[0] == "X"
+                course_days << day
+                course_periods << PERIODS[p[0]]
+                course_locations << data[12]
+              end
+            end
+          end
 
-						data[j] = doc.css('tr[align = "center"]')[i].css('td')[j].text
+          course = {
+            year: @year,    # 西元年
+            term: @term,    # 學期 (第一學期=1，第二學期=2)
+            name: data[4].scan(/\S+/)[0],    # 課程名稱
+            lecturer: data[11],    # 授課教師
+            credits: data[5].to_i,    # 學分數
+            code: "#{@year}-#{@term}-#{data[0]}-?(#{data[1]})?",
+            # general_code: data[1],    # 選課代碼
+            url: syllabus_url,    # 課程大綱之類的連結(如果有的話)
+            required: data[6].include?('必'),    # 必修或選修
+            department: dep_n,    # 開課系所
+            # department_code: data[0],  # 系所代碼
+            # notes: data[21],  # 備註
+            # limit_people: data[7],  # 限修人數
+            # people: data[8],  # 選課確定
+            # people_online: data[9],  # 線上人數
+            # people_last: data[10],  # 餘額
+            # pre_limit: data[20],  # 先修限修學程
+            day_1: course_days[0],
+            day_2: course_days[1],
+            day_3: course_days[2],
+            day_4: course_days[3],
+            day_5: course_days[4],
+            day_6: course_days[5],
+            day_7: course_days[6],
+            day_8: course_days[7],
+            day_9: course_days[8],
+            period_1: course_periods[0],
+            period_2: course_periods[1],
+            period_3: course_periods[2],
+            period_4: course_periods[3],
+            period_5: course_periods[4],
+            period_6: course_periods[5],
+            period_7: course_periods[6],
+            period_8: course_periods[7],
+            period_9: course_periods[8],
+            location_1: course_locations[0],
+            location_2: course_locations[1],
+            location_3: course_locations[2],
+            location_4: course_locations[3],
+            location_5: course_locations[4],
+            location_6: course_locations[5],
+            location_7: course_locations[6],
+            location_8: course_locations[7],
+            location_9: course_locations[8],
+            }
 
-					end
+          @after_each_proc.call(course: course) if @after_each_proc
 
-					course = {
-						year: @year,
-						term: @term,
-						faculty: fac_n,		# 開課部別
-						department: dep_n,		# 開課系所
-						department_code: data[0],		# 系所代碼
-						general_code: data[1],		# 課號
-						grade: data[2],		# 年級
-						calss: data[3],		# 班別
-						name: data[4],		# 課程名稱
-						credits: data[5],		# 學分
-						required: data[6],		# 修別
-						limit_people: data[7],		# 限修人數
-						people: data[8],		# 選課確定
-						people_online: data[9],		# 線上人數
-						people_last: data[10],		# 餘額
-						lecturer: data[11],		# 授課教師
-						location: data[12],		# 上課教室
-						day_1: data[13],		# 一~日的上課時間(節次)
-						day_2: data[14],
-						day_3: data[15],
-						day_4: data[16],
-						day_5: data[17],
-						day_6: data[18],
-						day_7: data[19],
-						pre_limit: data[20],		# 先修限修學程
-						notes: data[21],		# 備註
-					}
-
-					@after_each_proc.call(course: course) if @after_each_proc
-
-					@courses << course
-				end
-			end
-		end
-
-		# binding.pry
-		@courses
-	end
+          @courses << course
+    # binding.pry if dep_c == "LA"
+        end
+      end
+    end
+    @courses
+  end
 
 end
 
